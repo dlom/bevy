@@ -224,7 +224,7 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, f: impl FnOnce(App) -> AppExit + 'static) -> &mut Self {
+    pub fn set_runner(&mut self, f: impl FnOnce(App) -> AppExit + Send + 'static) -> &mut Self {
         self.runner = Box::new(f);
         self
     }
@@ -1459,7 +1459,7 @@ impl Plugin for HokeyPokey {
     fn build(&self, _: &mut App) {}
 }
 
-type RunnerFn = Box<dyn FnOnce(App) -> AppExit>;
+type RunnerFn = Box<dyn FnOnce(App) -> AppExit + Send>;
 
 fn run_once(mut app: App) -> AppExit {
     while app.plugins_state() == PluginsState::Adding {
@@ -2032,5 +2032,11 @@ mod tests {
         let test_events = app.world().resource::<Messages<TestMessage>>();
         assert_eq!(test_events.len(), 2); // Events are double-buffered, so we see 2 + 0 = 2
         assert_eq!(test_events.iter_current_update_messages().count(), 0);
+    }
+
+    #[test]
+    fn app_is_send() {
+        fn is_send<T: Send>() {}
+        is_send::<App>();
     }
 }

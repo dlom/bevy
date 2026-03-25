@@ -54,6 +54,15 @@ thread_local! {
     /// Temporary storage of WinitWindows data to replace usage of `!Send` resources. This will be replaced with proper
     /// storage of `!Send` data after issue #17667 is complete.
     pub static WINIT_WINDOWS: RefCell<WinitWindows> = const { RefCell::new(WinitWindows::new()) };
+
+    /// Stores the `EventLoop` between [`WinitPlugin::build`] and the runner.
+    /// Avoids capturing the `!Send` `EventLoop` in the runner closure, keeping
+    /// `RunnerFn` `Send` and `App` `Send`.
+    ///
+    /// `App::run` must be called on the same thread as `WinitPlugin::build`,
+    /// which winit already requires (the `EventLoop` must be used on the thread
+    /// it was created on).
+    static PENDING_EVENT_LOOP: RefCell<Option<EventLoop<WinitUserEvent>>> = const { RefCell::new(None) };
 }
 
 /// A [`Plugin`] that uses `winit` to create and manage windows, and receive window and input
@@ -132,7 +141,6 @@ impl Plugin for WinitPlugin {
             .insert_resource(DisplayHandleWrapper(event_loop.owned_display_handle()))
             .insert_resource(EventLoopProxyWrapper(event_loop.create_proxy()))
             .add_message::<RawWinitWindowEvent>()
-            .set_runner(|app| winit_runner(app, event_loop))
             .add_systems(
                 Last,
                 (
@@ -156,6 +164,15 @@ impl Plugin for WinitPlugin {
                 Ok(())
             },
         );
+
+        // Store EventLoop in TLS so the runner closure doesn't capture it (!Send).
+        PENDING_EVENT_LOOP.with(|el| *el.borrow_mut() = Some(event_loop));
+        app.set_runner(|app| {
+            let event_loop = PENDING_EVENT_LOOP
+                .with(|el| el.borrow_mut().take())
+                .expect("EventLoop not found in TLS, was the App moved to a different thread?");
+            winit_runner(app, event_loop)
+        });
     }
 }
 
